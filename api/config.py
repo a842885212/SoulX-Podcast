@@ -5,6 +5,12 @@ import os
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+from typing import Optional
 
 
 @dataclass

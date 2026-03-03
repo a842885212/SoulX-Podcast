@@ -12,13 +12,19 @@ import signal
 import time
 
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 def main():
     parser = argparse.ArgumentParser(description="启动SoulX-Podcast API服务")
     parser.add_argument(
         "--model",
         type=str,
-        default="pretrained_models/SoulX-Podcast-1.7B",
-        help="模型路径（默认: pretrained_models/SoulX-Podcast-1.7B）"
+        default=os.getenv("MODEL_PATH", "pretrained_models/SoulX-Podcast-1.7B"),
+        help="模型路径（默认从 MODEL_PATH 环境变量或: pretrained_models/SoulX-Podcast-1.7B 获取）"
     )
     parser.add_argument(
         "--port",
@@ -61,6 +67,7 @@ def main():
     # 设置环境变量
     os.environ["MODEL_PATH"] = args.model
     os.environ["API_HOST"] = args.host
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     os.environ["API_PORT"] = str(args.port)
     os.environ["LLM_ENGINE"] = args.engine
     os.environ["FP16_FLOW"] = "true" if args.fp16_flow else "false"

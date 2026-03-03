@@ -30,7 +30,16 @@ class HFLLMEngine:
         self.tokenizer = AutoTokenizer.from_pretrained(model, use_fast=True)
         config.eos = config.hf_config.eos_token_id # speech eos token;
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self.model = AutoModelForCausalLM.from_pretrained(model, torch_dtype=torch.bfloat16, device_map=self.device)
+        
+        # 限制 LLM 在 GPU 上的最大显存，剩余部分分配到 CPU，为后续的 Flow/HiFT 和推理计算预留空间
+        max_memory = {0: "1500MiB", "cpu": "16GiB"} if self.device == "cuda:0" else None
+        
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model, 
+            torch_dtype=torch.bfloat16, 
+            device_map="auto",
+            max_memory=max_memory
+        )
         self.config = config
         self.pad_token_id = self.tokenizer.pad_token_id
 
