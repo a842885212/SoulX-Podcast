@@ -31,12 +31,41 @@ class HFLLMEngine:
         config.eos = config.hf_config.eos_token_id # speech eos token;
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         
-        # 限制 LLM 在 GPU 上的最大显存，剩余部分分配到 CPU，为后续的 Flow/HiFT 和推理计算预留空间
-        max_memory = {0: "1500MiB", "cpu": "16GiB"} if self.device == "cuda:0" else None
+        max_memory = None
+        if self.device == "cuda:0":
+            # 动态探测当前 GPU 可用显存
+            free_mem, total_mem = torch.cuda.mem_get_info(0)
+            free_mb = free_mem / (1024 ** 2)
+            total_mb = total_mem / (1024 ** 2)
+            
+            from datetime import datetime
+            from tqdm import tqdm
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]
+            tqdm.write(f"[{timestamp}] - [INFO] - GPU 显存: 总计 {total_mb:.0f}MB, 当前可用 {free_mb:.0f}MB")
+            
+            # 熔断检查：可用显存低于 2.5GB 时直接拒绝，避免 OOM 拖慢整机
+            if free_mb < 2560:
+                raise RuntimeError(
+                    f"GPU 可用显存不足 ({free_mb:.0f}MB < 2560MB)。"
+                    f"请关闭浏览器或其他占用显存的程序后重试。"
+                )
+            
+            # 优先使用环境变量覆盖
+            env_limit = os.environ.get("LLM_GPU_MEMORY")
+            if env_limit:
+                gpu_mem_limit = env_limit
+            else:
+                # 预留 2252MB 给 Flow、HiFT 模型及推理计算，其余分给 LLM
+                reserve_mb = 2252
+                llm_limit_mb = int(free_mb - reserve_mb)
+                gpu_mem_limit = f"{llm_limit_mb}MiB"
+            
+            tqdm.write(f"[{timestamp}] - [INFO] - LLM 显存上限设置为: {gpu_mem_limit}")
+            max_memory = {0: gpu_mem_limit, "cpu": "32GiB"}
         
         self.model = AutoModelForCausalLM.from_pretrained(
             model, 
-            torch_dtype=torch.bfloat16, 
+            dtype=torch.bfloat16, 
             device_map="auto",
             max_memory=max_memory
         )
