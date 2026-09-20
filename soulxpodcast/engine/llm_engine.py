@@ -20,6 +20,25 @@ except ImportError:
 from soulxpodcast.config import Config, SamplingParams
 from soulxpodcast.models.modules.sampler import _ras_sample_hf_engine
 
+
+def resolve_llm_placement(total_mb: float, free_mb: float, compute_major: int):
+    """决定 LLM 精度与显存上限。
+
+    Turing（compute < 8）没有 BF16 Tensor Core，用 fp16 才能走 Tensor Core。
+    Flow/HiFT 预留保持 2252MB：6GB 上再缩小会在推理中段 OOM
+    （EP004 在预留 1400MB 时约 15 分钟后失败）。
+    其余显卡保持 bf16 + 同样的 2252MB 预留。
+    """
+    if compute_major < 8 and total_mb <= 8192:
+        dtype = torch.float16
+        reserve_mb = 2252
+    else:
+        dtype = torch.bfloat16
+        reserve_mb = 2252
+    llm_limit_mb = int(free_mb - reserve_mb)
+    return dtype, reserve_mb, llm_limit_mb
+
+
 class HFLLMEngine:
 
     def __init__(self, model, **kwargs):
@@ -51,21 +70,27 @@ class HFLLMEngine:
                 )
             
             # 优先使用环境变量覆盖
+            compute_major = torch.cuda.get_device_capability(0)[0]
+            dtype, reserve_mb, llm_limit_mb = resolve_llm_placement(
+                total_mb, free_mb, compute_major
+            )
             env_limit = os.environ.get("LLM_GPU_MEMORY")
             if env_limit:
                 gpu_mem_limit = env_limit
             else:
-                # 预留 2252MB 给 Flow、HiFT 模型及推理计算，其余分给 LLM
-                reserve_mb = 2252
-                llm_limit_mb = int(free_mb - reserve_mb)
                 gpu_mem_limit = f"{llm_limit_mb}MiB"
-            
-            tqdm.write(f"[{timestamp}] - [INFO] - LLM 显存上限设置为: {gpu_mem_limit}")
+
+            tqdm.write(
+                f"[{timestamp}] - [INFO] - LLM dtype={dtype}, "
+                f"Flow/HiFT 预留 {reserve_mb}MB, 显存上限 {gpu_mem_limit}"
+            )
             max_memory = {0: gpu_mem_limit, "cpu": "32GiB"}
+        else:
+            dtype = torch.float32
         
         self.model = AutoModelForCausalLM.from_pretrained(
             model, 
-            dtype=torch.bfloat16, 
+            dtype=dtype, 
             device_map="auto",
             max_memory=max_memory
         )
